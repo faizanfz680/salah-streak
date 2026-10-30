@@ -118,7 +118,16 @@ $("#authBtn").onclick = async () => {
 };
 $("#logout").onclick = () => sb.auth.signOut();
 
-sb.auth.onAuthStateChange((_e, session) => session ? startApp(session.user) : showAuth());
+let startedFor = null;
+sb.auth.onAuthStateChange((_e, session) => {
+  // Do not call Supabase inside this callback (it freezes the library): defer with setTimeout.
+  setTimeout(() => {
+    if (!session) { startedFor = null; return showAuth(); }
+    if (startedFor === session.user.id) return;
+    startedFor = session.user.id;
+    startApp(session.user);
+  }, 0);
+});
 sb.auth.getSession().then(({data}) => { if (!data.session) showAuth(); });
 
 function showAuth(){ $("#app").classList.add("hidden"); $("#auth").classList.remove("hidden"); }
@@ -127,9 +136,10 @@ function showAuth(){ $("#app").classList.add("hidden"); $("#auth").classList.rem
 function getCoords(){
   return new Promise(res => {
     if (!navigator.geolocation) { usingFallback = true; return res(); }
+    const guard = setTimeout(() => { usingFallback = true; res(); }, 8000);
     navigator.geolocation.getCurrentPosition(
-      p => { coords = {lat:p.coords.latitude, lon:p.coords.longitude}; res(); },
-      () => { usingFallback = true; res(); },
+      p => { clearTimeout(guard); coords = {lat:p.coords.latitude, lon:p.coords.longitude}; res(); },
+      () => { clearTimeout(guard); usingFallback = true; res(); },
       {timeout:6000}
     );
   });
@@ -162,7 +172,7 @@ async function startApp(user){
   try {
     await loadTimes();
     await refresh(user.id);
-  } catch (e) { say("Could not load prayer times. Check your internet and refresh."); }
+  } catch (e) { say("Could not load: " + (e.message || e)); }
 }
 async function refresh(uid){
   const [p, l] = await Promise.all([
