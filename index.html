@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Salah Streak</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@500;700&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#EDF2EE;--ink:#10342D;--muted:#5C7770;--card:#FFFFFF;--line:#D3DFD8;--accent:#E3A71F;--ok:#1F7A5C;--bad:#B3402F}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 16px/1.5 "Source Sans 3",system-ui,sans-serif}
+h1,h2,.big{font-family:"Bricolage Grotesque",system-ui,sans-serif;margin:0}
+main{max-width:520px;margin:0 auto;padding:20px 16px 60px}
+.hidden{display:none!important}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+input{width:100%;padding:12px;margin:6px 0 12px;border:1px solid var(--line);border-radius:10px;font:inherit}
+button{font:600 15px "Source Sans 3",sans-serif;border:0;border-radius:10px;padding:11px 16px;cursor:pointer;background:var(--ink);color:#fff}
+button.ghost{background:transparent;color:var(--muted);padding:6px 0}
+button:disabled{background:var(--line);color:var(--muted);cursor:not-allowed}
+button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+#msg{min-height:22px;color:var(--bad);margin:10px 0;font-size:14px}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.stat .big{font-size:34px;line-height:1.1}
+.stat small{color:var(--muted)}
+.bar{height:8px;background:var(--line);border-radius:6px;overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.prayer{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 0;border-top:1px solid var(--line)}
+.prayer:first-child{border-top:0}
+.prayer h2{font-size:20px}
+.prayer small{color:var(--muted);display:block}
+.right{text-align:right}
+.right label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+.right input{width:auto;margin:0 4px 0 0;vertical-align:middle}
+.done{color:var(--ok);font-weight:600}
+.late{color:var(--bad);font-weight:600}
+.note{color:var(--muted);font-size:13px;margin-top:12px}
+</style>
+</head>
+<body>
+<main>
+
+<section id="auth" class="hidden">
+  <h1 style="font-size:34px;margin:30px 0 4px">Salah Streak</h1>
+  <p style="color:var(--muted);margin:0 0 20px">Pray each day. Keep your streak alive.</p>
+  <div class="card">
+    <label>Username<input id="username" autocomplete="username" placeholder="e.g. abdullah"></label>
+    <label>Email<input id="email" type="email" autocomplete="email"></label>
+    <label>Password<input id="password" type="password" autocomplete="current-password" placeholder="At least 6 characters"></label>
+    <button id="authBtn" style="width:100%">Log in</button>
+    <button id="switchBtn" class="ghost" style="width:100%;margin-top:8px">New here? Create an account</button>
+  </div>
+</section>
+
+<section id="app" class="hidden">
+  <div class="top">
+    <div><h1 id="hello" style="font-size:24px"></h1><small id="dateLine" style="color:var(--muted)"></small></div>
+    <button class="ghost" id="logout">Log out</button>
+  </div>
+  <div class="stats">
+    <div class="card stat"><div class="big" id="streak">0</div><small>Day streak</small></div>
+    <div class="card stat"><div class="big" id="points">0</div><small>Total points</small></div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <strong id="progressText"></strong>
+    <div class="bar"><i id="progressBar" style="width:0"></i></div>
+  </div>
+  <div class="card" id="list"></div>
+  <p class="note" id="locNote"></p>
+</section>
+
+<div id="msg" role="alert"></div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ====== 1. PUT YOUR SUPABASE VALUES HERE ======
+const SUPABASE_URL = "https://oenlceekqrfbbytaojgm.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_ESNMC0pbhlrADxXo5fc5nA_H-MFqD9B";
+// ==============================================
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = s => document.querySelector(s);
+const PRAYERS = ["fajr","dhuhr","asr","maghrib","isha"];
+const NAMES = {fajr:"Fajr",dhuhr:"Dhuhr",asr:"Asr",maghrib:"Maghrib",isha:"Isha"};
+let mode = "login", profile = null, logs = [], logDate = null, windows = {}, coords = {lat:13.0827, lon:80.2707}, usingFallback = false;
+
+const pad = n => String(n).padStart(2,"0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const clock = d => d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"});
+const say = t => { $("#msg").textContent = t || ""; };
+
+// ---------- Login / sign-up ----------
+$("#switchBtn").onclick = () => {
+  mode = mode === "login" ? "signup" : "login";
+  $("#authBtn").textContent = mode === "login" ? "Log in" : "Create account";
+  $("#switchBtn").textContent = mode === "login" ? "New here? Create an account" : "Have an account? Log in";
+  $("#username").parentElement.classList.toggle("hidden", mode === "login");
+  say("");
+};
+$("#username").parentElement.classList.add("hidden");
+
+$("#authBtn").onclick = async () => {
+  say("");
+  const email = $("#email").value.trim(), password = $("#password").value, username = $("#username").value.trim();
+  if (!email || password.length < 6) return say("Enter your email and a password of at least 6 characters.");
+  if (mode === "signup") {
+    if (!/^[a-zA-Z0-9_]{3,20}$/.test(username)) return say("Username must be 3 to 20 letters, numbers or underscores.");
+    const { data, error } = await sb.auth.signUp({ email, password, options: { data: { username, display_name: username } } });
+    if (error) return say(error.message);
+    if (!data.session) say("Account created. Check your email to confirm, then log in.");
+  } else {
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    if (error) return say(error.message);
+  }
+};
+$("#logout").onclick = () => sb.auth.signOut();
+
+sb.auth.onAuthStateChange((_e, session) => session ? startApp(session.user) : showAuth());
+sb.auth.getSession().then(({data}) => { if (!data.session) showAuth(); });
+
+function showAuth(){ $("#app").classList.add("hidden"); $("#auth").classList.remove("hidden"); }
+
+// ---------- Prayer times ----------
+function getCoords(){
+  return new Promise(res => {
+    if (!navigator.geolocation) { usingFallback = true; return res(); }
+    navigator.geolocation.getCurrentPosition(
+      p => { coords = {lat:p.coords.latitude, lon:p.coords.longitude}; res(); },
+      () => { usingFallback = true; res(); },
+      {timeout:6000}
+    );
+  });
+}
+async function fetchTimings(d){
+  const url = `https://api.aladhan.com/v1/timings/${pad(d.getDate())}-${pad(d.getMonth()+1)}-${d.getFullYear()}?latitude=${coords.lat}&longitude=${coords.lon}&method=1`;
+  const r = await fetch(url); const j = await r.json();
+  return j.data.timings;
+}
+const at = (d, hhmm) => { const [h,m] = hhmm.slice(0,5).split(":"); return new Date(d.getFullYear(), d.getMonth(), d.getDate(), +h, +m); };
+
+async function loadTimes(){
+  await getCoords();
+  const now = new Date();
+  let base = now, t = await fetchTimings(base);
+  // The Islamic day starts at Fajr: before today's Fajr we are still on yesterday's prayers.
+  if (now < at(base, t.Fajr)) { base = new Date(now.getFullYear(), now.getMonth(), now.getDate()-1); t = await fetchTimings(base); }
+  logDate = ymd(base);
+  const midnight = new Date(base.getFullYear(), base.getMonth(), base.getDate()+1);
+  windows = {
+    fajr:[at(base,t.Fajr), at(base,t.Sunrise)], dhuhr:[at(base,t.Dhuhr), at(base,t.Asr)],
+    asr:[at(base,t.Asr), at(base,t.Maghrib)], maghrib:[at(base,t.Maghrib), at(base,t.Isha)],
+    isha:[at(base,t.Isha), midnight]
+  };
+}
+
+// ---------- App ----------
+async function startApp(user){
+  $("#auth").classList.add("hidden"); $("#app").classList.remove("hidden");
+  try {
+    await loadTimes();
+    await refresh(user.id);
+  } catch (e) { say("Could not load prayer times. Check your internet and refresh."); }
+}
+async function refresh(uid){
+  const [p, l] = await Promise.all([
+    sb.from("profiles").select("*").eq("id", uid).single(),
+    sb.from("prayer_logs").select("*").eq("log_date", logDate)
+  ]);
+  if (p.error || l.error) return say((p.error || l.error).message);
+  profile = p.data; logs = l.data; render();
+}
+
+function render(){
+  $("#hello").textContent = "Salam, " + (profile.display_name || profile.username);
+  $("#dateLine").textContent = new Date().toLocaleDateString([], {weekday:"long", day:"numeric", month:"long"});
+  $("#streak").textContent = profile.current_streak;
+  $("#points").textContent = profile.total_points;
+  $("#progressText").textContent = `${logs.length} of ${profile.min_prayers} prayers today`;
+  $("#progressBar").style.width = Math.min(100, logs.length / profile.min_prayers * 100) + "%";
+  $("#locNote").textContent = usingFallback ? "Location is off, so times are for Chennai. Allow location for your own prayer times." : "";
+  const now = new Date();
+  $("#list").innerHTML = "";
+  PRAYERS.forEach(p => {
+    const [start, end] = windows[p], log = logs.find(l => l.prayer === p);
+    const row = document.createElement("div"); row.className = "prayer";
+    const left = document.createElement("div");
+    left.innerHTML = `<h2>${NAMES[p]}</h2><small>${clock(start)}</small>`;
+    const right = document.createElement("div"); right.className = "right";
+    if (log) {
+      right.innerHTML = `<span class="${log.on_time ? "done" : "late"}">${log.on_time ? "On time" : "Late"}${log.in_jamaah ? ", jamaah" : ""}</span><small>+${log.points} points</small>`;
+    } else if (now < start) {
+      right.innerHTML = `<button disabled>Starts ${clock(start)}</button>`;
+    } else {
+      const open = now < end;
+      right.innerHTML = `<label><input type="checkbox" id="j-${p}">In jamaah</label><button id="b-${p}">${open ? "Mark prayed" : "Mark as late"}</button>`;
+      right.querySelector("button").onclick = () => mark(p, open, right.querySelector("input").checked);
+    }
+    row.append(left, right); $("#list").append(row);
+  });
+}
+
+async function mark(prayer, onTime, jamaah){
+  say("");
+  const { error } = await sb.from("prayer_logs").insert({ user_id: profile.id, log_date: logDate, prayer, on_time: onTime, in_jamaah: jamaah });
+  if (error) return say(error.message);
+  await refresh(profile.id);
+}
+</script>
+</body>
+</html>
